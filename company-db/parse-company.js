@@ -5,7 +5,7 @@
  * Uses OpenAI responses API with strict JSON schemas for reliable data extraction.
  * 
  * Architecture:
- * - Extract raw field data from Google Doc
+ * - Extract full text content from Google Doc
  * - Batch process simple fields with standard normalization  
  * - Individually analyze complex fields with high complexity filter
  * - Process special fields with custom rules
@@ -28,43 +28,28 @@ function parseCompanyFromDoc(docId) {
   try {
     Logger.log(`Starting parse for document: ${docId}`);
     
-    // Stage 1: Extract raw field values from Google Doc
-    const rawFields = extractRawFieldsFromDoc(docId);
-    Logger.log(`Extracted ${Object.keys(rawFields).length} raw fields`);
+    // Stage 1: Extract full text from Google Doc
+    const docText = DocumentApp.openById(docId).getBody().getText();
+    Logger.log(`Extracted document text.`);
     
     // Stage 2: Process simple fields in single batch
-    const simpleFields = parseSimpleFieldsBatch(rawFields);
-    Logger.log(`Processed simple fields batch`);
+    const simpleFields = parseSimpleFieldsBatch(docText);
+    Logger.log(`Processed simple fields batch.`);
     
     // Stage 3: Analyze complex fields individually with full context
-    const acvData = analyzeACVComplexity(rawFields['ACV'] || '', {
-      revenue_notes: rawFields['Revenue Notes'] || '',
-      arr_run_rate: rawFields['ARR Run Rate'] || '',
-      customer_count: rawFields['# of Customers'] || ''
-    });
-    const customerData = analyzeCustomerComplexity(rawFields['# of Customers'] || '', {
-      customer_notes: rawFields['Customer Notes'] || '',
-      acv: rawFields['ACV'] || '',
-      revenue_notes: rawFields['Revenue Notes'] || ''
-    });
-    const churnData = convertChurnToAnnual(rawFields['Logo Churn Annual'] || '');
-    Logger.log(`Analyzed complex fields`);
+    const acvData = analyzeACVComplexity(docText);
+    const customerData = analyzeCustomerComplexity(docText);
+    const churnData = convertChurnToAnnual(docText);
+    Logger.log(`Analyzed complex fields.`);
     
     // Stage 4: Process special fields
-    const burnData = normalizeMonthlyBurn(rawFields['Monthly Burn'] || '');
-    const valuationData = extractLastRoundValuation(
-      (rawFields['Active round / fundraise Notes'] || '') + ' ' + 
-      (rawFields['Other Funding Notes'] || ''),
-      {
-        raised: rawFields['Raised'] || '',
-        raising: rawFields['Raising'] || ''
-      }
-    );
-    Logger.log(`Processed special fields`);
+    const burnData = normalizeMonthlyBurn(docText);
+    const valuationData = extractLastRoundValuation(docText);
+    Logger.log(`Processed special fields.`);
     
     // Stage 5: Assemble complete record
     const completeRecord = assembleCompleteRecord(
-      docId, rawFields, simpleFields, acvData, customerData, 
+      docId, simpleFields, acvData, customerData, 
       churnData, burnData, valuationData
     );
     
@@ -77,82 +62,18 @@ function parseCompanyFromDoc(docId) {
   }
 }
 
-// === GOOGLE DOC EXTRACTION ===
-
-/**
- * Extract raw field values from Google Doc
- * @param {string} docId - Google Doc ID
- * @returns {object} Map of field labels to raw text values
- */
-function extractRawFieldsFromDoc(docId) {
-  try {
-    const doc = DocumentApp.openById(docId);
-    const body = doc.getBody();
-    const text = body.getText();
-    
-    // Field mapping based on template structure
-    const fieldPatterns = {
-      'Company Name': /Company Name:\s*(.+?)(?:\n|$)/i,
-      'URL': /URL:\s*(.+?)(?:\n|$)/i,
-      'Description': /Description:\s*(.+?)(?:\n|$)/i,
-      'Location': /Location:\s*(.+?)(?:\n|$)/i,
-      'Year founded': /Year founded:\s*(.+?)(?:\n|$)/i,
-      'Team size': /Team size:\s*(.+?)(?:\n|$)/i,
-      'ARR Run Rate': /ARR Run Rate:\s*(.+?)(?:\n|$)/i,
-      '2024 rev': /2024 rev:\s*(.+?)(?:\n|$)/i,
-      '2023 rev': /2023 rev:\s*(.+?)(?:\n|$)/i,
-      '2022 rev': /2022 rev:\s*(.+?)(?:\n|$)/i,
-      'Revenue Notes': /Revenue Notes:\s*(.+?)(?:\n|$)/i,
-      '% SaaS Recurring': /% SaaS Recurring:\s*(.+?)(?:\n|$)/i,
-      'Gross Margin': /Gross Margin:\s*(.+?)(?:\n|$)/i,
-      '# of Customers': /# of Customers:\s*(.+?)(?:\n|$)/i,
-      'Customer Notes': /Customer Notes:\s*(.+?)(?:\n|$)/i,
-      'Competition': /Competition:\s*(.+?)(?:\n|$)/i,
-      'ACV': /ACV:\s*(.+?)(?:\n|$)/i,
-      'Logo Churn Annual': /Logo Churn Annual:\s*(.+?)(?:\n|$)/i,
-      'Net Revenue Retention': /Net Revenue Retention:\s*(.+?)(?:\n|$)/i,
-      'Blended CAC': /Blended CAC:\s*(.+?)(?:\n|$)/i,
-      'Payback Period': /Payback Period:\s*(.+?)(?:\n|$)/i,
-      'Monthly Burn': /Monthly Burn:\s*(.+?)(?:\n|$)/i,
-      'Cash': /Cash:\s*(.+?)(?:\n|$)/i,
-      'Runway': /Runway:\s*(.+?)(?:\n|$)/i,
-      'Raising': /Raising:\s*(.+?)(?:\n|$)/i,
-      'Raised': /Raised:\s*(.+?)(?:\n|$)/i,
-      'Active round / fundraise Notes': /Active round \/ fundraise Notes:\s*(.+?)(?:\n|$)/i,
-      'Other Funding Notes': /Other Funding Notes:\s*(.+?)(?:\n|$)/i,
-      'Good': /Good:\s*(.+?)(?:\n|$)/i,
-      'Challenges': /Challenges:\s*(.+?)(?:\n|$)/i,
-      'Needs Action': /Needs Action:\s*(.+?)(?:\n|$)/i
-    };
-    
-    const rawFields = {};
-    
-    // Extract each field using regex patterns
-    for (const [fieldName, pattern] of Object.entries(fieldPatterns)) {
-      const match = text.match(pattern);
-      rawFields[fieldName] = match ? match[1].trim() : '';
-    }
-    
-    return rawFields;
-    
-  } catch (error) {
-    Logger.log(`Error extracting from doc ${docId}: ${error.toString()}`);
-    throw error;
-  }
-}
-
 // === SIMPLE FIELDS BATCH PROCESSING ===
 
 /**
  * Process simple fields in a single batch API call
- * @param {object} rawFields - Raw field values from Google Doc
+ * @param {string} docText - Full text content from Google Doc
  * @returns {object} Normalized simple field values
  */
-function parseSimpleFieldsBatch(rawFields) {
+function parseSimpleFieldsBatch(docText) {
   const prompt = `
 You are a financial data analyst normalizing venture capital due diligence notes into a structured database.
 
-TASK: Extract and normalize the following company fields from raw note data.
+TASK: From the document text provided, extract and normalize the company fields listed in the JSON schema.
 
 NORMALIZATION RULES:
 - Convert shorthand to full numbers: "400k" → 400000, "1.2M" → 1200000, "5B" → 5000000000
@@ -164,39 +85,45 @@ NORMALIZATION RULES:
 - For text fields, clean up formatting but preserve content
 
 FIELD DEFINITIONS:
-- arr_run_rate: Annual Recurring Revenue run rate in dollars
-- carr: Contracted Annual Recurring Revenue (only if explicitly mentioned as "contracted ARR" or "CARR")
-- revenue_2024/2023/2022: Historical revenue figures in dollars
-- cash: Current cash position in dollars  
-- runway: Runway in months (convert "18 months" → 18)
-- raising: Amount currently raising in dollars
-- raised: Amount previously raised in dollars
-- cac: Customer Acquisition Cost in dollars
-- payback_period: Payback period in months
-- ltv_to_cac: LTV to CAC ratio as decimal (3.5x → 3.5)
-- gross_margin: Gross margin as decimal (85% → 0.85)
-- saas_recurring_percent: Percentage of revenue that is SaaS recurring, as decimal
-- nrr: Net Revenue Retention as decimal (115% → 1.15)
-- team_size: Number of full-time employees as integer
-- year_founded: Four-digit founding year as integer
-- location: Location string, cleaned up
-- description: Company description, cleaned up
-- competition: Competition notes, cleaned up  
-- revenue_notes: Revenue-related notes, cleaned up
-- funding_notes: Funding-related notes, cleaned up
-- good: Positive notes, cleaned up
-- challenges: Challenge notes, cleaned up
-- needs_action: Action items, cleaned up
+- company_name: The name of the company.
+- url: The company's website URL.
+- arr_run_rate: Annual Recurring Revenue run rate in dollars.
+- carr: Contracted Annual Recurring Revenue (only if explicitly mentioned as "contracted ARR" or "CARR").
+- revenue_2024/2023/2022: Historical revenue figures in dollars.
+- cash: Current cash position in dollars.  
+- runway: Runway in months (convert "18 months" → 18).
+- raising: Amount currently raising in dollars.
+- raised: Amount previously raised in dollars.
+- cac: Customer Acquisition Cost in dollars.
+- payback_period: Payback period in months.
+- ltv_to_cac: LTV to CAC ratio as decimal (3.5x → 3.5).
+- gross_margin: Gross margin as decimal (85% → 0.85).
+- saas_recurring_percent: Percentage of revenue that is SaaS recurring, as decimal.
+- nrr: Net Revenue Retention as decimal (115% → 1.15).
+- team_size: Number of full-time employees as integer.
+- year_founded: Four-digit founding year as integer.
+- location: Location string, cleaned up.
+- description: Company description, cleaned up.
+- competition: Competition notes, cleaned up.  
+- revenue_notes: Revenue-related notes, cleaned up.
+- funding_notes: Funding-related notes (combine "Active round" and "Other Funding" notes).
+- good: Positive notes, cleaned up.
+- challenges: Challenge notes, cleaned up.
+- needs_action: Action items, cleaned up.
 
-RAW FIELD DATA:
-${JSON.stringify(rawFields, null, 2)}
+DOCUMENT TEXT:
+---
+${docText}
+---
 
-Extract and normalize these fields. Return null for any field that is missing, empty, or unclear.
+Extract and normalize these fields based on the entire document. Return null for any field that is missing, empty, or unclear.
 `;
 
   const schema = {
     type: "object",
     properties: {
+      company_name: { type: ["string", "null"] },
+      url: { type: ["string", "null"] },
       arr_run_rate: { type: ["number", "null"] },
       carr: { type: ["number", "null"] },
       revenue_2024: { type: ["number", "null"] },
@@ -224,7 +151,7 @@ Extract and normalize these fields. Return null for any field that is missing, e
       needs_action: { type: ["string", "null"] }
     },
     required: [
-      "arr_run_rate", "carr", "revenue_2024", "revenue_2023", "revenue_2022",
+      "company_name", "url", "arr_run_rate", "carr", "revenue_2024", "revenue_2023", "revenue_2022",
       "cash", "runway", "raising", "raised", "cac", "payback_period", "ltv_to_cac",
       "gross_margin", "saas_recurring_percent", "nrr", "team_size", "year_founded",
       "location", "description", "competition", "revenue_notes", "funding_notes",
@@ -240,12 +167,11 @@ Extract and normalize these fields. Return null for any field that is missing, e
 
 /**
  * Analyze ACV for potential customer segmentation complexity
- * @param {string} acvRawText - Raw ACV field text
- * @param {object} context - Additional context fields for better analysis
+ * @param {string} docText - Full text content from Google Doc
  * @returns {object} ACV analysis result with potential secondary value
  */
-function analyzeACVComplexity(acvRawText, context = {}) {
-  if (!acvRawText || acvRawText.trim() === '') {
+function analyzeACVComplexity(docText) {
+  if (!docText || docText.trim() === '') {
     return { acv: null, acv_2: null };
   }
 
@@ -271,16 +197,12 @@ EXAMPLES OF COMPLEX ACV (return primary + secondary):
 - "Fortune 500 contracts $500k average, mid-market $15k average" → COMPLEX (33x difference, meaningful segments)
 - "Enterprise tier $200k ACV, SMB tier $5k ACV, roughly 50/50 revenue split" → COMPLEX (40x difference, both meaningful)
 
-ADDITIONAL CONTEXT:
-Consider the following related information when making your analysis:
-- Revenue Notes: "${context.revenue_notes || 'Not provided'}"
-- ARR Run Rate: "${context.arr_run_rate || 'Not provided'}"
-- Customer Count: "${context.customer_count || 'Not provided'}"
+TASK: Analyze the ACV data within the following document. Use the full context of the document to identify customer segments, revenue distribution, and other relevant factors.
 
-TASK: Analyze the following ACV data and determine if it should be treated as simple or complex.
-Use the additional context to inform your decision about customer segmentation and revenue distribution.
-
-Raw ACV data: "${acvRawText}"
+DOCUMENT TEXT:
+---
+${docText}
+---
 
 If SIMPLE: Extract the single ACV value and return acv_2 as null.
 If COMPLEX: Extract both ACV values, with primary ACV being the larger/more important segment.
@@ -301,12 +223,11 @@ If COMPLEX: Extract both ACV values, with primary ACV being the larger/more impo
 
 /**
  * Analyze customer count for potential segmentation complexity
- * @param {string} customerRawText - Raw customer count field text  
- * @param {object} context - Additional context fields for better analysis
+ * @param {string} docText - Full text content from Google Doc
  * @returns {object} Customer count analysis result with potential secondary value
  */
-function analyzeCustomerComplexity(customerRawText, context = {}) {
-  if (!customerRawText || customerRawText.trim() === '') {
+function analyzeCustomerComplexity(docText) {
+  if (!docText || docText.trim() === '') {
     return { customer_count: null, customer_count_2: null };
   }
 
@@ -329,16 +250,12 @@ EXAMPLES OF COMPLEX CUSTOMER COUNT (return primary + secondary):
 - "100 enterprise customers at $50k each, 5000 freemium customers at $200 each" → COMPLEX (250x value difference)  
 - "50 Fortune 500 clients, 2000 SMB clients with very different contract values" → COMPLEX (clear value segments)
 
-ADDITIONAL CONTEXT:
-Consider the following related information when making your analysis:
-- Customer Notes: "${context.customer_notes || 'Not provided'}"
-- ACV Information: "${context.acv || 'Not provided'}"
-- Revenue Notes: "${context.revenue_notes || 'Not provided'}"
+TASK: Analyze the customer count data within the following document. Use the full context to understand segmentation and value differences.
 
-TASK: Analyze the following customer count data.
-Use the additional context to understand customer segmentation and value differences.
-
-Raw customer data: "${customerRawText}"
+DOCUMENT TEXT:
+---
+${docText}
+---
 
 If SIMPLE: Extract the single customer count and return customer_count_2 as null.
 If COMPLEX: Extract both counts, with primary being the higher-value customer segment.
@@ -359,32 +276,36 @@ If COMPLEX: Extract both counts, with primary being the higher-value customer se
 
 /**
  * Convert logo churn to annual rate with proper temporal mathematics
- * @param {string} churnRawText - Raw churn field text
+ * @param {string} docText - Full text content from Google Doc
  * @returns {object} Annual churn rate
  */
-function convertChurnToAnnual(churnRawText) {
-  if (!churnRawText || churnRawText.trim() === '') {
+function convertChurnToAnnual(docText) {
+  if (!docText || docText.trim() === '') {
     return { logo_churn_annual: null };
   }
 
   const prompt = `
-You are converting logo churn rates to annual rates using proper temporal mathematics.
+You are converting a logo churn rate to an annual rate using proper temporal mathematics.
 
 CRITICAL TEMPORAL CONVERSION RULES:
-- If already annual: return as-is
-- If monthly: Convert using compound formula: Annual = 1 - (1 - monthly_rate)^12
-- NOT simple multiplication by 12 (that's mathematically incorrect)
+- If rate is already annual: return as-is.
+- If rate is monthly: Convert using the compound formula: Annual = 1 - (1 - monthly_rate)^12
+- Do NOT use simple multiplication (e.g., monthly * 12), as it's mathematically incorrect for compounding rates.
 
 EXAMPLES:
 - "2% monthly churn" → 1 - (1 - 0.02)^12 = 1 - 0.784 = 0.216 (21.6% annual)
 - "15% annual churn" → 0.15 (already annual)
 - "1% monthly" → 1 - (1 - 0.01)^12 = 1 - 0.886 = 0.114 (11.4% annual)
+- "Logo Churn Annual: 10%" -> 0.10
 
-TASK: Analyze and convert the following churn data to annual rate.
+TASK: Find the logo churn rate in the document, identify its period (monthly or annual), and convert it to an annual rate.
 
-Raw churn data: "${churnRawText}"
+DOCUMENT TEXT:
+---
+${docText}
+---
 
-Return the annual churn rate as a decimal (15% → 0.15).
+Return the final annual churn rate as a decimal (e.g., 15% → 0.15). If no churn data is found, return null.
 `;
 
   const schema = {
@@ -407,34 +328,38 @@ Return the annual churn rate as a decimal (15% → 0.15).
 
 /**
  * Normalize monthly burn with special rules for qualitative values
- * @param {string} burnRawText - Raw monthly burn field text
+ * @param {string} docText - Full text content from Google Doc
  * @returns {object} Normalized monthly burn value
  */
-function normalizeMonthlyBurn(burnRawText) {
-  if (!burnRawText || burnRawText.trim() === '') {
+function normalizeMonthlyBurn(docText) {
+  if (!docText || docText.trim() === '') {
     return { monthly_burn: null };
   }
 
   const prompt = `
-You are normalizing monthly burn rate data with special rules for qualitative descriptions.
+You are normalizing monthly burn rate data, with special rules for qualitative descriptions.
 
 SPECIAL NORMALIZATION RULES:
-- "breakeven" or "profitable" → 0 (no burn)
-- "low" → 50000 (standardized low burn amount)
+- "breakeven", "profitable", "cash flow positive" → 0 (no burn)
+- "low burn" → 50000 (standardized low burn amount)
 - Numerical values: Apply standard conversion ("$500k" → 500000)
-- Unclear/ambiguous → null
+- Unclear/ambiguous descriptions → null
 
 EXAMPLES:
 - "We're profitable" → 0
 - "Breakeven last month" → 0  
 - "Low burn rate" → 50000
 - "Around $300k monthly" → 300000
-- "$1.2M per month" → 1200000
 - "Very low expenses" → 50000
 
-TASK: Normalize the following monthly burn data.
+TASK: Find and normalize the monthly burn data from the following document.
 
-Raw burn data: "${burnRawText}"
+DOCUMENT TEXT:
+---
+${docText}
+---
+
+Return the normalized monthly burn. If no burn data is found, return null.
 `;
 
   const schema = {
@@ -455,19 +380,18 @@ Raw burn data: "${burnRawText}"
 
 /**
  * Extract last round post-money valuation from funding notes
- * @param {string} fundingNotesText - Combined funding notes text
- * @param {object} context - Additional context for valuation analysis
+ * @param {string} docText - Full text content from Google Doc
  * @returns {object} Last round valuation if found
  */
-function extractLastRoundValuation(fundingNotesText, context = {}) {
-  if (!fundingNotesText || fundingNotesText.trim() === '') {
+function extractLastRoundValuation(docText) {
+  if (!docText || docText.trim() === '') {
     return { last_round_valuation: null };
   }
 
   const prompt = `
 You are extracting post-money valuation data from venture capital funding notes.
 
-TASK: Find the most recent funding round's post-money valuation.
+TASK: Find the most recent funding round's post-money valuation from the document.
 
 LOOK FOR:
 - Explicit statements: "Series A at $50M post-money", "valued at $100M post-money"
@@ -481,14 +405,9 @@ CONVERSION RULES:
 
 IGNORE:
 - Old/historical rounds unless explicitly stated as most recent
-- Rough estimates, projections, or aspirational valuations
+- Rough estimates, projections, or aspirational valuations for future rounds
 - Secondary market or informal valuations
 - Pre-money valuations without investment amount to convert
-
-ADDITIONAL CONTEXT:
-Consider this additional information when analyzing funding:
-- Previously Raised: "${context.raised || 'Not provided'}"
-- Currently Raising: "${context.raising || 'Not provided'}"
 
 EXAMPLES:
 - "Series B: $15M at $75M post-money" → 75000000
@@ -496,10 +415,14 @@ EXAMPLES:
 - "Previous round was $20M pre-money" → null (not post-money, not recent)
 - "Looking to raise at $100M valuation" → null (aspirational)
 
-TASK: Extract post-money valuation from funding notes.
-Use the additional context to distinguish between past rounds and current/recent valuations.
+TASK: Extract the most recent, confirmed post-money valuation from the document text.
 
-Funding notes text: "${fundingNotesText}"
+DOCUMENT TEXT:
+---
+${docText}
+---
+
+Return the valuation. If no clear, recent, post-money valuation is found, return null.
 `;
 
   const schema = {
@@ -523,7 +446,6 @@ Funding notes text: "${fundingNotesText}"
 /**
  * Assemble complete normalized company record with consistent schema
  * @param {string} docId - Google Doc ID
- * @param {object} rawFields - Original raw field values
  * @param {object} simpleFields - Processed simple fields
  * @param {object} acvData - ACV analysis results
  * @param {object} customerData - Customer analysis results  
@@ -532,13 +454,13 @@ Funding notes text: "${fundingNotesText}"
  * @param {object} valuationData - Valuation extraction results
  * @returns {object} Complete company record matching database schema
  */
-function assembleCompleteRecord(docId, rawFields, simpleFields, acvData, customerData, churnData, burnData, valuationData) {
+function assembleCompleteRecord(docId, simpleFields, acvData, customerData, churnData, burnData, valuationData) {
   const docUrl = `https://docs.google.com/document/d/${docId}`;
   
   return {
     // === CORE IDENTIFICATION ===
     id: Utilities.getUuid(),
-    company_name: rawFields['Company Name'] || null,
+    company_name: simpleFields.company_name,
     doc_url: docUrl,
     date_created: new Date().toISOString(),
     
@@ -575,6 +497,7 @@ function assembleCompleteRecord(docId, rawFields, simpleFields, acvData, custome
     year_founded: simpleFields.year_founded,
     location: simpleFields.location,
     description: simpleFields.description,
+    url: simpleFields.url,
     competition: simpleFields.competition,
     revenue_notes: simpleFields.revenue_notes,
     funding_notes: simpleFields.funding_notes,
