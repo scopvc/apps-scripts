@@ -36,9 +36,17 @@ function parseCompanyFromDoc(docId) {
     const simpleFields = parseSimpleFieldsBatch(rawFields);
     Logger.log(`Processed simple fields batch`);
     
-    // Stage 3: Analyze complex fields individually
-    const acvData = analyzeACVComplexity(rawFields['ACV'] || '');
-    const customerData = analyzeCustomerComplexity(rawFields['# of Customers'] || '');
+    // Stage 3: Analyze complex fields individually with full context
+    const acvData = analyzeACVComplexity(rawFields['ACV'] || '', {
+      revenue_notes: rawFields['Revenue Notes'] || '',
+      arr_run_rate: rawFields['ARR Run Rate'] || '',
+      customer_count: rawFields['# of Customers'] || ''
+    });
+    const customerData = analyzeCustomerComplexity(rawFields['# of Customers'] || '', {
+      customer_notes: rawFields['Customer Notes'] || '',
+      acv: rawFields['ACV'] || '',
+      revenue_notes: rawFields['Revenue Notes'] || ''
+    });
     const churnData = convertChurnToAnnual(rawFields['Logo Churn Annual'] || '');
     Logger.log(`Analyzed complex fields`);
     
@@ -46,7 +54,11 @@ function parseCompanyFromDoc(docId) {
     const burnData = normalizeMonthlyBurn(rawFields['Monthly Burn'] || '');
     const valuationData = extractLastRoundValuation(
       (rawFields['Active round / fundraise Notes'] || '') + ' ' + 
-      (rawFields['Other Funding Notes'] || '')
+      (rawFields['Other Funding Notes'] || ''),
+      {
+        raised: rawFields['Raised'] || '',
+        raising: rawFields['Raising'] || ''
+      }
     );
     Logger.log(`Processed special fields`);
     
@@ -94,6 +106,7 @@ function extractRawFieldsFromDoc(docId) {
       '% SaaS Recurring': /% SaaS Recurring:\s*(.+?)(?:\n|$)/i,
       'Gross Margin': /Gross Margin:\s*(.+?)(?:\n|$)/i,
       '# of Customers': /# of Customers:\s*(.+?)(?:\n|$)/i,
+      'Customer Notes': /Customer Notes:\s*(.+?)(?:\n|$)/i,
       'Competition': /Competition:\s*(.+?)(?:\n|$)/i,
       'ACV': /ACV:\s*(.+?)(?:\n|$)/i,
       'Logo Churn Annual': /Logo Churn Annual:\s*(.+?)(?:\n|$)/i,
@@ -228,9 +241,10 @@ Extract and normalize these fields. Return null for any field that is missing, e
 /**
  * Analyze ACV for potential customer segmentation complexity
  * @param {string} acvRawText - Raw ACV field text
+ * @param {object} context - Additional context fields for better analysis
  * @returns {object} ACV analysis result with potential secondary value
  */
-function analyzeACVComplexity(acvRawText) {
+function analyzeACVComplexity(acvRawText, context = {}) {
   if (!acvRawText || acvRawText.trim() === '') {
     return { acv: null, acv_2: null };
   }
@@ -257,7 +271,14 @@ EXAMPLES OF COMPLEX ACV (return primary + secondary):
 - "Fortune 500 contracts $500k average, mid-market $15k average" → COMPLEX (33x difference, meaningful segments)
 - "Enterprise tier $200k ACV, SMB tier $5k ACV, roughly 50/50 revenue split" → COMPLEX (40x difference, both meaningful)
 
+ADDITIONAL CONTEXT:
+Consider the following related information when making your analysis:
+- Revenue Notes: "${context.revenue_notes || 'Not provided'}"
+- ARR Run Rate: "${context.arr_run_rate || 'Not provided'}"
+- Customer Count: "${context.customer_count || 'Not provided'}"
+
 TASK: Analyze the following ACV data and determine if it should be treated as simple or complex.
+Use the additional context to inform your decision about customer segmentation and revenue distribution.
 
 Raw ACV data: "${acvRawText}"
 
@@ -281,9 +302,10 @@ If COMPLEX: Extract both ACV values, with primary ACV being the larger/more impo
 /**
  * Analyze customer count for potential segmentation complexity
  * @param {string} customerRawText - Raw customer count field text  
+ * @param {object} context - Additional context fields for better analysis
  * @returns {object} Customer count analysis result with potential secondary value
  */
-function analyzeCustomerComplexity(customerRawText) {
+function analyzeCustomerComplexity(customerRawText, context = {}) {
   if (!customerRawText || customerRawText.trim() === '') {
     return { customer_count: null, customer_count_2: null };
   }
@@ -307,7 +329,14 @@ EXAMPLES OF COMPLEX CUSTOMER COUNT (return primary + secondary):
 - "100 enterprise customers at $50k each, 5000 freemium customers at $200 each" → COMPLEX (250x value difference)  
 - "50 Fortune 500 clients, 2000 SMB clients with very different contract values" → COMPLEX (clear value segments)
 
+ADDITIONAL CONTEXT:
+Consider the following related information when making your analysis:
+- Customer Notes: "${context.customer_notes || 'Not provided'}"
+- ACV Information: "${context.acv || 'Not provided'}"
+- Revenue Notes: "${context.revenue_notes || 'Not provided'}"
+
 TASK: Analyze the following customer count data.
+Use the additional context to understand customer segmentation and value differences.
 
 Raw customer data: "${customerRawText}"
 
@@ -427,9 +456,10 @@ Raw burn data: "${burnRawText}"
 /**
  * Extract last round post-money valuation from funding notes
  * @param {string} fundingNotesText - Combined funding notes text
+ * @param {object} context - Additional context for valuation analysis
  * @returns {object} Last round valuation if found
  */
-function extractLastRoundValuation(fundingNotesText) {
+function extractLastRoundValuation(fundingNotesText, context = {}) {
   if (!fundingNotesText || fundingNotesText.trim() === '') {
     return { last_round_valuation: null };
   }
@@ -455,6 +485,11 @@ IGNORE:
 - Secondary market or informal valuations
 - Pre-money valuations without investment amount to convert
 
+ADDITIONAL CONTEXT:
+Consider this additional information when analyzing funding:
+- Previously Raised: "${context.raised || 'Not provided'}"
+- Currently Raising: "${context.raising || 'Not provided'}"
+
 EXAMPLES:
 - "Series B: $15M at $75M post-money" → 75000000
 - "Raised $5M for 10% equity" → 50000000  
@@ -462,6 +497,7 @@ EXAMPLES:
 - "Looking to raise at $100M valuation" → null (aspirational)
 
 TASK: Extract post-money valuation from funding notes.
+Use the additional context to distinguish between past rounds and current/recent valuations.
 
 Funding notes text: "${fundingNotesText}"
 `;
