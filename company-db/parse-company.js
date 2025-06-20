@@ -196,8 +196,8 @@ Extract and normalize these fields. Return null for any field that is missing, e
       cac: { type: ["number", "null"] },
       payback_period: { type: ["number", "null"] },
       ltv_to_cac: { type: ["number", "null"] },
-      gross_margin: { type: ["number", "null"], minimum: 0, maximum: 5 },
-      saas_recurring_percent: { type: ["number", "null"], minimum: 0, maximum: 1 },
+      gross_margin: { type: ["number", "null"] },
+      saas_recurring_percent: { type: ["number", "null"] },
       nrr: { type: ["number", "null"] },
       team_size: { type: ["integer", "null"] },
       year_founded: { type: ["integer", "null"] },
@@ -210,7 +210,13 @@ Extract and normalize these fields. Return null for any field that is missing, e
       challenges: { type: ["string", "null"] },
       needs_action: { type: ["string", "null"] }
     },
-    required: [],
+    required: [
+      "arr_run_rate", "carr", "revenue_2024", "revenue_2023", "revenue_2022",
+      "cash", "runway", "raising", "raised", "cac", "payback_period", "ltv_to_cac",
+      "gross_margin", "saas_recurring_percent", "nrr", "team_size", "year_founded",
+      "location", "description", "competition", "revenue_notes", "funding_notes",
+      "good", "challenges", "needs_action"
+    ],
     additionalProperties: false
   };
 
@@ -262,31 +268,14 @@ If COMPLEX: Extract both ACV values, with primary ACV being the larger/more impo
   const schema = {
     type: "object",
     properties: {
-      is_complex: { type: "boolean" },
-      reasoning: { 
-        type: "string",
-        description: "Detailed explanation of complexity decision and reasoning"
-      },
-      acv: { 
-        type: ["number", "null"],
-        description: "Primary ACV value in dollars"
-      },
-      acv_2: { 
-        type: ["number", "null"],
-        description: "Secondary ACV value in dollars (only if complex)"
-      }
+      acv: { type: ["number", "null"] },
+      acv_2: { type: ["number", "null"] }
     },
-    required: ["is_complex", "reasoning", "acv", "acv_2"],
+    required: ["acv", "acv_2"],
     additionalProperties: false
   };
 
-  const result = callOpenAIStructured(prompt, schema, "acv_complexity_analysis");
-  
-  // Return only the ACV values
-  return {
-    acv: result.acv,
-    acv_2: result.acv_2
-  };
+  return callOpenAIStructured(prompt, schema, "acv_complexity_analysis");
 }
 
 /**
@@ -329,30 +318,14 @@ If COMPLEX: Extract both counts, with primary being the higher-value customer se
   const schema = {
     type: "object",
     properties: {
-      is_complex: { type: "boolean" },
-      reasoning: { 
-        type: "string",
-        description: "Detailed explanation of complexity decision"
-      },
-      customer_count: { 
-        type: ["integer", "null"],
-        description: "Primary customer count"
-      },
-      customer_count_2: { 
-        type: ["integer", "null"],
-        description: "Secondary customer count (only if complex)"
-      }
+      customer_count: { type: ["integer", "null"] },
+      customer_count_2: { type: ["integer", "null"] }
     },
-    required: ["is_complex", "reasoning", "customer_count", "customer_count_2"],
+    required: ["customer_count", "customer_count_2"],
     additionalProperties: false
   };
 
-  const result = callOpenAIStructured(prompt, schema, "customer_complexity_analysis");
-  
-  return {
-    customer_count: result.customer_count,
-    customer_count_2: result.customer_count_2
-  };
+  return callOpenAIStructured(prompt, schema, "customer_complexity_analysis");
 }
 
 /**
@@ -388,25 +361,9 @@ Return the annual churn rate as a decimal (15% → 0.15).
   const schema = {
     type: "object",
     properties: {
-      original_period: {
-        type: ["string", "null"],
-        enum: ["monthly", "annual", null],
-        description: "Original time period of the churn rate"
-      },
-      original_rate: {
-        type: ["number", "null"],
-        description: "Original churn rate as decimal"
-      },
-      logo_churn_annual: {
-        type: ["number", "null"],
-        description: "Annual churn rate as decimal, properly converted if needed"
-      },
-      conversion_applied: {
-        type: "boolean",
-        description: "Whether temporal conversion was applied"
-      }
+      logo_churn_annual: { type: ["number", "null"] }
     },
-    required: ["original_period", "original_rate", "logo_churn_annual", "conversion_applied"],
+    required: ["logo_churn_annual"],
     additionalProperties: false
   };
 
@@ -454,16 +411,9 @@ Raw burn data: "${burnRawText}"
   const schema = {
     type: "object", 
     properties: {
-      monthly_burn: {
-        type: ["number", "null"],
-        description: "Monthly burn in dollars, with special rules applied"
-      },
-      normalization_applied: {
-        type: "string",
-        description: "What normalization rule was applied"
-      }
+      monthly_burn: { type: ["number", "null"] }
     },
-    required: ["monthly_burn", "normalization_applied"],
+    required: ["monthly_burn"],
     additionalProperties: false
   };
 
@@ -519,25 +469,9 @@ Funding notes text: "${fundingNotesText}"
   const schema = {
     type: "object",
     properties: {
-      last_round_valuation: {
-        type: ["number", "null"],
-        description: "Most recent post-money valuation in dollars"
-      },
-      confidence_level: {
-        type: "string",
-        enum: ["high", "medium", "low"],
-        description: "Confidence in the extracted valuation"
-      },
-      extraction_method: {
-        type: "string", 
-        description: "How the valuation was determined (explicit, calculated, etc.)"
-      },
-      source_text: {
-        type: ["string", "null"],
-        description: "Specific text that provided the valuation"
-      }
+      last_round_valuation: { type: ["number", "null"] }
     },
-    required: ["last_round_valuation", "confidence_level", "extraction_method", "source_text"],
+    required: ["last_round_valuation"],
     additionalProperties: false
   };
 
@@ -677,7 +611,7 @@ function callOpenAIStructured(prompt, schema, schemaName) {
  * Replace with actual Google Doc ID for testing
  */
 function testParseCompany() {
-  const testDocId = "1EXAMPLE_DOC_ID_HERE"; // Replace with real doc ID
+  const testDocId = "1FSBUo3aXlRSTC_sRXung-N_RqUiqau8ioQ5iQpd8jMU"; // Replace with real doc ID
   
   try {
     const result = parseCompanyFromDoc(testDocId);
